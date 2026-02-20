@@ -29,9 +29,9 @@ import json
 GHGRP_FILE = "GHGRP_extended.csv"
 TRADE_FILE = "trade_clean_output.csv"
 POLICY_FILE = "policy.csv"
-EENE_FILE = "Data-download-2024-EENE-EN.xlsx"
 
-OUTPUT_PANEL = "did_panel_final_clean_2007-2023.csv"
+
+OUTPUT_PANEL = "did_panel_final_clean.csv"
 OUTPUT_RESULTS_JSON = "master_builder_results_fixed.json"
 
 # ============================================================================
