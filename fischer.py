@@ -129,6 +129,11 @@ ab_merged['log_exports'] = np.log(ab_merged['export_value'])
 # Create OBPS-only subset (non-zero lagged issuance)
 ab_obps = ab_merged[ab_merged['EPC_issuance_lag'] > 0].copy()
 
+# Sector-specific linear time trend (replaces year fixed effects in core spec)
+ab_obps = ab_obps.sort_values(['naics_3digit', 'year']).reset_index(drop=True)
+ab_obps['time_trend'] = ab_obps.groupby('naics_3digit').cumcount()
+ab_obps['EPC_bank'] = ab_obps['EPC_bank_lagged']
+
 # Normalize EPC for interpretation and muting mechanism tests
 ab_obps['EPC_per_emissions'] = ab_obps['EPC_bank_lagged'] / (ab_obps['emissions'] + 1)
 ab_obps['EPC_per_export'] = ab_obps['EPC_bank_lagged'] / (ab_obps['export_value'] + 1)
@@ -167,18 +172,18 @@ print("\n[8] Model 1: Intensity Model (Simple Specification)")
 print("-" * 80)
 
 model_int_simple = ols(
-    'log_intensity ~ carbon_price + EPC_bank_millions + C(naics_3digit) + C(year)',
+    'log_intensity ~ carbon_price + EPC_bank + log_wti + us_demand + time_trend + C(naics_3digit)',
     data=ab_obps
 ).fit()
 
 print(model_int_simple.summary())
 
-beta_epc_int = safe_series_value(model_int_simple.params, 'EPC_bank_millions')
-pval_epc_int = safe_series_value(model_int_simple.pvalues, 'EPC_bank_millions')
-se_epc_int = safe_series_value(model_int_simple.bse, 'EPC_bank_millions')
+beta_epc_int = safe_series_value(model_int_simple.params, 'EPC_bank')
+pval_epc_int = safe_series_value(model_int_simple.pvalues, 'EPC_bank')
+se_epc_int = safe_series_value(model_int_simple.bse, 'EPC_bank')
 
 print(f"\n✓ KEY RESULT - Intensity Model:")
-print(f"  β on EPC_bank_millions = {beta_epc_int:.6f}")
+print(f"  β on EPC_bank = {beta_epc_int:.6f}")
 print(f"  Std Error = {se_epc_int:.6f}")
 print(f"  P-value = {pval_epc_int:.4f}")
 print(f"  95% CI: [{beta_epc_int - 1.96*se_epc_int:.6f}, {beta_epc_int + 1.96*se_epc_int:.6f}]")
