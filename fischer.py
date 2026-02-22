@@ -25,6 +25,18 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
 warnings.filterwarnings('ignore')
 
+
+def require_columns(df, required, df_name):
+    """Raise a clear error when expected columns are missing."""
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise KeyError(f"{df_name} is missing required columns: {missing}")
+
+
+def safe_series_value(series, key, default=np.nan):
+    """Return regression output value without KeyError when a term is dropped."""
+    return series[key] if key in series.index else default
+
 # Set plotting style
 sns.set_style("whitegrid")
 plt.rcParams['figure.figsize'] = (12, 6)
@@ -39,6 +51,7 @@ print("="*80)
 
 print("\n[1] Loading EPC data...")
 epc_raw = pd.read_csv('EPCs_final_NAICs_.csv')
+require_columns(epc_raw, ['vintage', 'NAICS_3digit', 'Quantity'], 'EPCs_final_NAICs_.csv')
 
 # Filter to 2007-2023
 epc = epc_raw[epc_raw['vintage'] <= 2023].copy()
@@ -48,6 +61,11 @@ print(f"    EPC data: {epc.shape[0]} rows, {epc['NAICS_3digit'].nunique()} secto
 
 print("\n[2] Loading Alberta panel data...")
 ab = pd.read_excel('AB_panel.xlsx')
+require_columns(
+    ab,
+    ['year', 'naics_3digit', 'export_value', 'log_intensity', 'carbon_price', 'eite'],
+    'AB_panel.xlsx'
+)
 print(f"    Alberta panel: {ab.shape[0]} rows, {ab['year'].min()}-{ab['year'].max()}")
 
 # ============================================================================
@@ -62,8 +80,7 @@ epc['EPC_bank_lagged'] = epc.groupby('NAICS_3digit')['EPC_bank'].shift(1)
 
 # Keep only 2008+ (since 2007 has no lagged value)
 epc_for_regression = epc[epc['vintage'] >= 2008].copy()
-epc_for_regression.columns = ['year', 'NAICS_3digit', 'EPC_quantity', 
-                               'EPC_bank', 'EPC_bank_lagged']
+epc_for_regression = epc_for_regression.rename(columns={'vintage': 'year', 'Quantity': 'EPC_quantity'})
 epc_for_regression = epc_for_regression[['year', 'NAICS_3digit', 'EPC_bank_lagged']]
 
 print(f"    EPC_bank_lagged: {epc_for_regression.shape[0]} observations ready")
@@ -140,9 +157,9 @@ model_int_simple = ols(
 
 print(model_int_simple.summary())
 
-beta_epc_int = model_int_simple.params['EPC_bank_millions']
-pval_epc_int = model_int_simple.pvalues['EPC_bank_millions']
-se_epc_int = model_int_simple.bse['EPC_bank_millions']
+beta_epc_int = safe_series_value(model_int_simple.params, 'EPC_bank_millions')
+pval_epc_int = safe_series_value(model_int_simple.pvalues, 'EPC_bank_millions')
+se_epc_int = safe_series_value(model_int_simple.bse, 'EPC_bank_millions')
 
 print(f"\n✓ KEY RESULT - Intensity Model:")
 print(f"  β on EPC_bank_millions = {beta_epc_int:.6f}")
@@ -168,9 +185,9 @@ model_exp_simple = ols(
 
 print(model_exp_simple.summary())
 
-beta_epc_exp = model_exp_simple.params['EPC_bank_millions']
-pval_epc_exp = model_exp_simple.pvalues['EPC_bank_millions']
-se_epc_exp = model_exp_simple.bse['EPC_bank_millions']
+beta_epc_exp = safe_series_value(model_exp_simple.params, 'EPC_bank_millions')
+pval_epc_exp = safe_series_value(model_exp_simple.pvalues, 'EPC_bank_millions')
+se_epc_exp = safe_series_value(model_exp_simple.bse, 'EPC_bank_millions')
 
 print(f"\n✓ KEY RESULT - Export Model:")
 print(f"  β on EPC_bank_millions = {beta_epc_exp:.6f}")
@@ -200,10 +217,9 @@ print("="*80)
 print("\n[11] Robustness Check 1: Current EPC (not lagged)")
 print("-" * 80)
 
-ab_obps['EPC_bank_current'] = ab_obps['EPC_bank_lagged'] / ab_obps['EPC_bank_millions'] * ab_obps['EPC_bank_millions']
 # Actually use non-lagged for this check
 epc_current = epc[epc['vintage'] >= 2008].copy()
-epc_current.columns = ['year', 'NAICS_3digit', 'EPC_quantity', 'EPC_bank', 'EPC_bank_lagged']
+epc_current = epc_current.rename(columns={'vintage': 'year', 'Quantity': 'EPC_quantity'})
 epc_current = epc_current[['year', 'NAICS_3digit', 'EPC_bank']]
 
 ab_current = ab_obps.merge(
@@ -219,8 +235,8 @@ model_int_current = ols(
     data=ab_current.dropna(subset=['EPC_bank_current_millions'])
 ).fit()
 
-beta_epc_current = model_int_current.params['EPC_bank_current_millions']
-pval_epc_current = model_int_current.pvalues['EPC_bank_current_millions']
+beta_epc_current = safe_series_value(model_int_current.params, 'EPC_bank_current_millions')
+pval_epc_current = safe_series_value(model_int_current.pvalues, 'EPC_bank_current_millions')
 
 print(f"Current year EPC coefficient: {beta_epc_current:.6f}, p = {pval_epc_current:.4f}")
 print(f"Lagged year EPC coefficient:  {beta_epc_int:.6f}, p = {pval_epc_int:.4f}")
@@ -238,8 +254,8 @@ model_int_large = ols(
     data=ab_large
 ).fit()
 
-beta_epc_large = model_int_large.params['EPC_bank_millions']
-pval_epc_large = model_int_large.pvalues['EPC_bank_millions']
+beta_epc_large = safe_series_value(model_int_large.params, 'EPC_bank_millions')
+pval_epc_large = safe_series_value(model_int_large.pvalues, 'EPC_bank_millions')
 
 print(f"Large sectors (N={ab_large.shape[0]}): β = {beta_epc_large:.6f}, p = {pval_epc_large:.4f}")
 print(f"All sectors (N={ab_obps.shape[0]}):      β = {beta_epc_int:.6f}, p = {pval_epc_int:.4f}")
@@ -256,8 +272,8 @@ model_int_no211 = ols(
     data=ab_no211
 ).fit()
 
-beta_epc_no211 = model_int_no211.params['EPC_bank_millions']
-pval_epc_no211 = model_int_no211.pvalues['EPC_bank_millions']
+beta_epc_no211 = safe_series_value(model_int_no211.params, 'EPC_bank_millions')
+pval_epc_no211 = safe_series_value(model_int_no211.pvalues, 'EPC_bank_millions')
 
 print(f"Without 211 (N={ab_no211.shape[0]}): β = {beta_epc_no211:.6f}, p = {pval_epc_no211:.4f}")
 print(f"All sectors (N={ab_obps.shape[0]}):   β = {beta_epc_int:.6f}, p = {pval_epc_int:.4f}")
@@ -292,7 +308,7 @@ summary_results = pd.DataFrame({
         beta_epc_current,
         beta_epc_large,
         beta_epc_no211,
-        model_int_int.params['EPC_bank_millions'],
+        safe_series_value(model_int_int.params, 'EPC_bank_millions'),
         beta_epc_exp
     ],
     'P-value': [
@@ -300,7 +316,7 @@ summary_results = pd.DataFrame({
         pval_epc_current,
         pval_epc_large,
         pval_epc_no211,
-        model_int_int.pvalues['EPC_bank_millions'],
+        safe_series_value(model_int_int.pvalues, 'EPC_bank_millions'),
         pval_epc_exp
     ],
     'R-squared': [
@@ -316,7 +332,7 @@ summary_results = pd.DataFrame({
         'Yes' if pval_epc_current < 0.05 else 'No',
         'Yes' if pval_epc_large < 0.05 else 'No',
         'Yes' if pval_epc_no211 < 0.05 else 'No',
-        'Yes' if model_int_int.pvalues['EPC_bank_millions'] < 0.05 else 'No',
+        'Yes' if safe_series_value(model_int_int.pvalues, 'EPC_bank_millions') < 0.05 else 'No',
         'Yes' if pval_epc_exp < 0.05 else 'No'
     ]
 })
@@ -464,4 +480,3 @@ To modify and test:
 5. Export results:
    model_int_simple.summary().tables[1].to_csv('results.csv')
 """)
-
