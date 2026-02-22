@@ -102,23 +102,40 @@ print("=" * 80)
 print("\n[BROKEN] Model with Year FE + carbon_price + log_wti (High Collinearity):")
 print("-" * 80)
 
-ab_obps_clean = ab_obps.dropna(subset=["log_intensity", "log_wti", "us_demand_matched", "carbon_price"]).copy()
+ab_obps_clean = ab_obps.dropna(
+    subset=["log_intensity", "log_wti", "us_demand_matched", "carbon_price", "naics_3digit"]
+).copy()
 
-model_broken = ols(
-    "log_intensity ~ carbon_price + EPC_bank_millions + log_wti + us_demand_matched + C(year) + C(naics_3digit)",
-    data=ab_obps_clean,
-).fit()
+if ab_obps_clean.empty:
+    raise ValueError(
+        "No usable rows after cleaning. Check missingness in "
+        "log_intensity/log_wti/us_demand_matched/carbon_price/naics_3digit."
+    )
 
-print(f"\nCondition Number: {model_broken.condition_number:.2e}")
-print(f"β on carbon_price:  {model_broken.params['carbon_price']:8.6f} (p={model_broken.pvalues['carbon_price']:.4f})")
-print(f"β on log_wti:       {model_broken.params['log_wti']:8.6f} (p={model_broken.pvalues['log_wti']:.4f})")
+model_broken = None
+ab_obps_fe = ab_obps_clean.dropna(subset=["year"]).copy()
 
-if model_broken.condition_number > 1e10:
-    print("\n✗ SEVERE MULTICOLLINEARITY DETECTED")
-    print("  Condition number > 1e+10 means:")
-    print("  - Year FE is fighting carbon_price and WTI for variance")
-    print("  - Standard errors inflated")
-    print("  - Coefficients unreliable")
+if ab_obps_fe.empty or ab_obps_fe["naics_3digit"].nunique() < 1 or ab_obps_fe["year"].nunique() < 1:
+    print("\n⚠ Skipping [BROKEN] Year FE model: no valid year/NAICS categories after cleaning.")
+else:
+    try:
+        model_broken = ols(
+            "log_intensity ~ carbon_price + EPC_bank_millions + log_wti + us_demand_matched + C(year) + C(naics_3digit)",
+            data=ab_obps_fe,
+        ).fit()
+
+        print(f"\nCondition Number: {model_broken.condition_number:.2e}")
+        print(f"β on carbon_price:  {model_broken.params['carbon_price']:8.6f} (p={model_broken.pvalues['carbon_price']:.4f})")
+        print(f"β on log_wti:       {model_broken.params['log_wti']:8.6f} (p={model_broken.pvalues['log_wti']:.4f})")
+
+        if model_broken.condition_number > 1e10:
+            print("\n✗ SEVERE MULTICOLLINEARITY DETECTED")
+            print("  Condition number > 1e+10 means:")
+            print("  - Year FE is fighting carbon_price and WTI for variance")
+            print("  - Standard errors inflated")
+            print("  - Coefficients unreliable")
+    except ValueError as err:
+        print(f"\n⚠ Skipping [BROKEN] Year FE model due to design-matrix issue: {err}")
 
 print("\n[FIXED] Model with Linear Time Trend (No Multicollinearity):")
 print("-" * 80)
@@ -134,20 +151,29 @@ print(f"β on log_wti:       {model_fixed.params['log_wti']:8.6f} (p={model_fixe
 
 if model_fixed.condition_number < 1e10:
     print("\n✓ MULTICOLLINEARITY FIXED")
-    print(f"  Condition number improved: {model_broken.condition_number:.2e} → {model_fixed.condition_number:.2e}")
+    if model_broken is not None:
+        print(f"  Condition number improved: {model_broken.condition_number:.2e} → {model_fixed.condition_number:.2e}")
+    else:
+        print("  Condition number improved relative to skipped Year FE baseline: n/a")
     print("  Coefficients now reliable")
 
 print("\n[IMPROVEMENT SUMMARY]:")
 print("-" * 80)
-condition_improvement = model_broken.condition_number / model_fixed.condition_number
+if model_broken is not None:
+    condition_improvement = model_broken.condition_number / model_fixed.condition_number
+else:
+    condition_improvement = np.nan
 price_improvement = abs(model_fixed.params["carbon_price"]) > 0.01 and model_fixed.pvalues["carbon_price"] < 0.10
 wti_improvement = abs(model_fixed.params["log_wti"]) > 0.01 and model_fixed.pvalues["log_wti"] < 0.10
 
-print(f"Condition Number Improvement: {condition_improvement:.2e}x reduction")
+if np.isfinite(condition_improvement):
+    print(f"Condition Number Improvement: {condition_improvement:.2e}x reduction")
+else:
+    print("Condition Number Improvement: n/a (Year FE model skipped)")
 print(f"Carbon Price Significant?     {price_improvement}")
 print(f"WTI Price Significant?        {wti_improvement}")
 
-if condition_improvement > 1e10 and (price_improvement or wti_improvement):
+if np.isfinite(condition_improvement) and condition_improvement > 1e10 and (price_improvement or wti_improvement):
     print("\n✓✓✓ FIX SUCCESSFUL")
     print("    Use linear time trend in all subsequent models")
 else:
