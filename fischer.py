@@ -162,6 +162,9 @@ print("\n" + "="*80)
 print("REGRESSION ANALYSIS")
 print("="*80)
 
+# Time trend alternative to year fixed effects for nested specifications
+ab_obps['time_trend_year'] = ab_obps['year'] - ab_obps['year'].min()
+
 # ---- Model 1: Intensity (Simple) ----
 print("\n[8] Model 1: Intensity Model (Simple Specification)")
 print("-" * 80)
@@ -189,6 +192,25 @@ if beta_epc_int > 0 and pval_epc_int < 0.05:
     print(f"     Consistent with Fisher's hypothesis")
 elif beta_epc_int > 0:
     print(f"\n  ✓ Positive direction, marginally significant (p = {pval_epc_int:.4f})")
+
+# ---- Model 1B: Nested specification with macro controls and linear time trend ----
+print("\n[8B] Model 1B: Fischer Nested Specification (Time Trend)")
+print("-" * 80)
+
+model_b = ols(
+    'log_intensity ~ carbon_price + EPC_bank_millions + log_wti + us_demand + time_trend_year + C(naics_3digit)',
+    data=ab_obps
+).fit()
+
+print(model_b.summary())
+print(f"\n  Condition number (Model 1B): {model_b.condition_number:.2e}")
+print(
+    "  Key coefficients (Model 1B): "
+    f"carbon_price={safe_series_value(model_b.params, 'carbon_price'):.6f} "
+    f"(p={safe_series_value(model_b.pvalues, 'carbon_price'):.4f}), "
+    f"log_wti={safe_series_value(model_b.params, 'log_wti'):.6f} "
+    f"(p={safe_series_value(model_b.pvalues, 'log_wti'):.4f})"
+)
 
 # ---- Model 2: Exports (Simple) ----
 print("\n[9] Model 2: Export Model (Simple Specification)")
