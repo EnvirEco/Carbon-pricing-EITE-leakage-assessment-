@@ -219,16 +219,20 @@ print("-" * 80)
 
 # Actually use non-lagged for this check
 epc_current = epc[epc['vintage'] >= 2008].copy()
-epc_current = epc_current.rename(columns={'vintage': 'year', 'Quantity': 'EPC_quantity'})
-epc_current = epc_current[['year', 'NAICS_3digit', 'EPC_bank']]
+epc_current = epc_current.rename(columns={'vintage': 'year', 'NAICS_3digit': 'naics_3digit'})
+epc_current = epc_current[['year', 'naics_3digit', 'EPC_bank']]
 
 ab_current = ab_obps.merge(
     epc_current.rename(columns={'EPC_bank': 'EPC_bank_current'}),
-    left_on=['year', 'naics_3digit'],
-    right_on=['year', 'NAICS_3digit'],
+    on=['year', 'naics_3digit'],
     how='left'
 )
-ab_current['EPC_bank_current_millions'] = ab_current['EPC_bank_current'] / 1_000_000
+
+missing_current_epc = ab_current['EPC_bank_current'].isna().sum()
+if missing_current_epc > 0:
+    print(f"Warning: {missing_current_epc} rows missing current-year EPC after merge; dropping for regression.")
+
+ab_current['EPC_bank_current_millions'] = pd.to_numeric(ab_current['EPC_bank_current'], errors='coerce') / 1_000_000
 
 model_int_current = ols(
     'log_intensity ~ carbon_price + EPC_bank_current_millions + C(naics_3digit) + C(year)',
