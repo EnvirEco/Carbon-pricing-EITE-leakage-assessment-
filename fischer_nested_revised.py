@@ -31,6 +31,25 @@ def pval(result, key):
     return result.pvalues.get(key, np.nan)
 
 
+def available_controls(df, preferred_controls):
+    """Return controls that have at least one non-null value in the dataframe."""
+    controls = []
+    for col in preferred_controls:
+        if col in df.columns and df[col].notna().any():
+            controls.append(col)
+    return controls
+
+
+def build_formula(base_terms, controls, include_time=False, include_year_fe=False):
+    terms = list(base_terms) + list(controls)
+    if include_time:
+        terms.append("time_global")
+    if include_year_fe:
+        terms.append("C(year)")
+    terms.append("C(naics_3digit)")
+    return "log_intensity ~ " + " + ".join(terms)
+
+
 print("=" * 80)
 print("FISCHER NESTED REVISED - YEAR FE vs TIME TREND")
 print("=" * 80)
@@ -116,14 +135,26 @@ print("=" * 80)
 print("\n[BROKEN] Model with Year FE + carbon_price + log_wti (High Collinearity):")
 print("-" * 80)
 
-ab_obps_clean = ab_obps.dropna(
-    subset=["log_intensity", "log_wti", "us_demand_matched", "carbon_price", "naics_3digit"]
-).copy()
+preferred_controls = ["log_wti", "us_demand_matched"]
+controls = available_controls(ab_obps, preferred_controls)
+missing_controls = [col for col in preferred_controls if col not in controls]
+
+if missing_controls:
+    print("\n⚠ Optional controls dropped due to missingness/availability: " + ", ".join(missing_controls))
+
+clean_subset = ["log_intensity", "carbon_price", "naics_3digit"] + controls
+ab_obps_clean = ab_obps.dropna(subset=clean_subset).copy()
 
 if ab_obps_clean.empty:
+    missing_report = (
+        ab_obps[["log_intensity", "carbon_price", "naics_3digit"] + preferred_controls]
+        .isna()
+        .mean()
+        .sort_values(ascending=False)
+    )
     raise ValueError(
-        "No usable rows after cleaning. Check missingness in "
-        "log_intensity/log_wti/us_demand_matched/carbon_price/naics_3digit."
+        "No usable rows after cleaning with available controls. "
+        f"Missing-share by variable: {missing_report.to_dict()}"
     )
 
 model_broken = None
@@ -133,10 +164,12 @@ if ab_obps_fe.empty or ab_obps_fe["naics_3digit"].nunique() < 1 or ab_obps_fe["y
     print("\n⚠ Skipping [BROKEN] Year FE model: no valid year/NAICS categories after cleaning.")
 else:
     try:
-        model_broken = ols(
-            "log_intensity ~ carbon_price + EPC_bank_millions + log_wti + us_demand_matched + C(year) + C(naics_3digit)",
-            data=ab_obps_fe,
-        ).fit()
+        broken_formula = build_formula(
+            ["carbon_price", "EPC_bank_millions"],
+            controls,
+            include_year_fe=True,
+        )
+        model_broken = ols(broken_formula, data=ab_obps_fe).fit()
 
         print(f"\nCondition Number: {model_broken.condition_number:.2e}")
         print(f"β on carbon_price:  {coef(model_broken, 'carbon_price'):8.6f} (p={pval(model_broken, 'carbon_price'):.4f})")
@@ -154,10 +187,12 @@ else:
 print("\n[FIXED] Model with Linear Time Trend (No Multicollinearity):")
 print("-" * 80)
 
-model_fixed = ols(
-    "log_intensity ~ carbon_price + EPC_bank_millions + log_wti + us_demand_matched + time_global + C(naics_3digit)",
-    data=ab_obps_clean,
-).fit()
+fixed_formula = build_formula(
+    ["carbon_price", "EPC_bank_millions"],
+    controls,
+    include_time=True,
+)
+model_fixed = ols(fixed_formula, data=ab_obps_clean).fit()
 
 print(f"\nCondition Number: {model_fixed.condition_number:.2e}")
 print(f"β on carbon_price:  {coef(model_fixed, 'carbon_price'):8.6f} (p={pval(model_fixed, 'carbon_price'):.4f})")
